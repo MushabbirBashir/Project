@@ -1,6 +1,7 @@
 # File: stock_prediction.py
 # Authors: Bao Vo and Cheong Koo
 # Date: 14/07/2021(v1); 19/07/2021 (v2); 02/07/2024 (v3)
+from tkinter import Scale
 
 # Code modified from:
 # Title: Predicting Stock Prices with Python
@@ -22,10 +23,12 @@ import pandas as pd
 import pandas_datareader as web
 import datetime as dt
 import tensorflow as tf
+from sklearn.model_selection import train_test_split
 
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, LSTM, InputLayer
+from yahoo_fin import stock_info as si
 
 #------------------------------------------------------------------------------
 # Load Data
@@ -279,3 +282,138 @@ print(f"Prediction: {prediction}")
 # the stock price:
 # https://github.com/jason887/Using-Deep-Learning-Neural-Networks-and-Candlestick-Chart-Representation-to-Predict-Stock-Market
 # Can you combine these different techniques for a better prediction??
+
+
+
+def shuffle_in_unison(a, b):
+    """Shuffles two arrays in the same way, ensuring corresponding elements align"""
+
+    state = np.random.get_state() #stores the random state for future use
+    np.random.shuffle(a)
+    np.random.set_state(state) #sets the state to previously used seed to maintain correspondence
+    bp.random.shuffle(b)
+
+
+def load_data(ticker, start_date=None, end_date=None, n_steps=50, scale=True, shuffle=True, lookup_step=1, split_by_date=True, test_size=0.2, feature_columns=['adjclose', 'volume', 'open', 'high', 'low'], save_locally=False, load_locally=False, local_path='data.csv'):
+   
+
+    """
+    Loads data from Yahoo Finance source, scaling, shuffling, normalizing, splitting, handling NaNs, and saving/loading locally.
+    
+    Parameters:
+        ticker (str/pd.DataFrame): The ticker you want to load, e.g., 'AAPL', 'TSLA', or a DataFrame with data.
+        start_date (str): Start date for fetching data (format: 'YYYY-MM-DD').
+        end_date (str): End date for fetching data (format: 'YYYY-MM-DD').
+        n_steps (int): Historical sequence length (i.e., window size) for prediction. Default is 50.
+        scale (bool): Whether to scale prices from 0 to 1. Default is True.
+        shuffle (bool): Whether to shuffle the dataset (training & testing). Default is True.
+        lookup_step (int): Future lookup step to predict. Default is 1 (e.g., next day).
+        split_by_date (bool): Whether to split the dataset by date. Default is True. If False, splits randomly.
+        test_size (float): Ratio for test data. Default is 0.2 (20% testing data).
+        feature_columns (list): List of features to use for the model. Default is all Yahoo Finance features.
+        save_locally (bool): Option to save data locally for future use. Default is False.
+        load_locally (bool): Option to load data locally if it exists. Default is False.
+        local_path (str): Path to save or load data locally. Default is 'data.csv'.
+
+    Returns:
+        dict: A dictionary containing the processed dataset and additional information.
+    """
+    # Check if local data exists and load it if load_locally is True
+    if load_locally and os.path.exists(local_path):
+        df = pd.read_csv(local_path, index_col = 0, parse_dates = true)
+    else:
+        # Load data from Yahoo Finance or from a dataframe if load_locally is False
+        if isinstance(ticker, str):
+            df = si.get_data(ticker, start_date = start_date, end_date = end_date)
+            #allows specification of start date and end date for whole dataset as inputs
+        elif isinstance(ticker, pd.DataFrame):
+            df = ticker
+        else:
+            raise TypeError("ticker must be either a str or a pd.dataFrame instance.")
+
+        # Save data locally if requested
+        if save_locally:
+         df.to_csv(local_path)
+
+    # Ensure all feature columns are present in the dataframe
+    for col in feature_columns:
+        assert col in df.columns, f"'{col}' does not exist in the DataFrame."
+
+    # Prepare the result dictionary
+    result = {}
+    #Add a copy of the original dataframe
+    result['df'] = df.copy()
+
+    # Add date as a column
+    if "date" not in df.columns:
+        df["date"] = df.index
+
+    # Scaling the data if scale is True (default)
+    if scale:
+        column_scaler = {}
+        # Scale the data
+        for column in feature_columns:
+            scaler = preprocessing.MinMaxScaler()
+            df[column] = scaler.fit_transform(np.expand_dims(df[column].values, axis = 1))
+            column_scaler[column] = scaler
+        result['column_scaler'] = column_scaler
+
+    # add the target column (label) by shifting by `lookup_step`
+    df['future'] = df['adjclose'].shift(-lookup_step)
+
+    # last `lookup_step` columns contains NaN in future column
+    # get them before dropping NaNs
+    last_sequence = np.array(df[feature_columns].tail(lookup_step))
+
+    # Drop NaNs
+    df.dropna(inplace = True)
+
+    # Handle sequences for training/testing
+    sequence_data = []
+    sequences = deque(maxlen = n_steps)
+
+    for entry, target in zip(df[feature_columns + ["date"]].values , df['future'].values):
+        sequences.append(entry)
+        if len(sequences) == n_steps:
+            sequence_data.append([np.array(last_sequence), target])
+
+    last_sequence = list([s[:len(feature_columns)] for s in sequences]) + list(last_sequence)
+    last_sequence = np.array(last_sequence).astype(np.float32)
+    result['last_sequence'] = last_sequence
+
+    # Prepare X's and y's for model
+    X, y = [], []
+    for seq, target in sequence_data:
+        X.append(seq)
+        y.append(target)
+
+    X = np.array(X)
+    y = np.array(y)
+
+    # Spliting the dataset
+    if split_by_date:
+        train_samples = int((1 - test_size) * len(X))
+        result["X_train"] = X[:train_samples]
+        result["y_train"] = y[:train_samples]
+        result["X_test"] = X[train_samples:]
+        result["y_test"] = y[train_samples:]
+        if shuffle:
+            # shuffle the datasets for training (if shuffle parameter is set)
+            shuffle_in_unison(result["X_train"], result["y_train"])
+            shuffle_in_unison(result["X_test"], result["y_test"])
+    else:
+        # If split_by_date is False
+        result["X_train"], result["X_test"], result["y_train"], result["y_test"] = train_test_split(X, y, test_size = test_size, shuffle = shuffle)
+
+    # Extract dates for testing set
+    dates = result["X_test"][:, -1, -1]
+    result["test_df"] = result["df"].loc[dates]
+    result["test_df"] = result["test_df"][~result["test_df"].index.duplicated(keep = 'first')]
+
+    # Remove dates from training/testing sets and convert them to float32
+    result["X_train"] = result["X_train"][:, :, :len(feature_columns)].astype(np.float32)
+    result["X_test"] = result["X_test"][:, :, :len(feature_columns)].astype(np.float32)
+
+    return result
+
+    
