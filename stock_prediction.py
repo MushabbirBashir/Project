@@ -23,12 +23,14 @@ import pandas as pd
 import pandas_datareader as web
 import datetime as dt
 import tensorflow as tf
-from sklearn.model_selection import train_test_split
+import mplfinance as mplf
 
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, LSTM, InputLayer
 from yahoo_fin import stock_info as si
+
 
 #------------------------------------------------------------------------------
 # Load Data
@@ -417,3 +419,32 @@ def load_data(ticker, start_date=None, end_date=None, n_steps=50, scale=True, sh
     return result
 
     
+def plot_boxplot_chart(data, window = 30):
+
+    rolling_data = [data['close'][i : i + window] for i in range(len(data) - window + 1)]
+
+    plt.figure(figsize = (10, 6))
+    plt.boxplot(rolling_data)
+    plt.title(f'Boxplot of Stock Prices Over a {window}-Day Moving Window')
+    plt.xlabel('Window Number')
+    plt.ylabel('Stock Price')
+    plt.show()
+
+
+
+def plot_candlestick_chart(data, num_of_days=1):
+
+    data.index = pd.to_datetime(data.index)
+
+    if num_of_days > 1:
+
+        data = data.resample(f'{num_of_days}D').agg({
+            'open': 'first',
+            'high': 'max',
+            'low': 'min',
+            'close': 'last',
+            'volume': 'sum'
+        }).dropna()
+
+
+    mplf.plot(data, type='candle', style='yahoo', title='Candlestick Chart', ylabel='Price')

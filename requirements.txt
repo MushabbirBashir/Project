@@ -1,5 +1,6 @@
 numpy
 matplotlib
+mplfinance
 pandas
 tensorflow
 scikit-learn
