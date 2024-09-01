@@ -24,6 +24,7 @@ import pandas_datareader as web
 import datetime as dt
 import tensorflow as tf
 import mplfinance as mplf
+from pandas.core.interchange.dataframe_protocol import DataFrame
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
@@ -418,33 +419,61 @@ def load_data(ticker, start_date=None, end_date=None, n_steps=50, scale=True, sh
 
     return result
 
-    
-def plot_boxplot_chart(data, window = 30):
 
-    rolling_data = [data['close'][i : i + window] for i in range(len(data) - window + 1)]
+def plot_candlestick_chart(data : DataFrame, num_of_days : int = 1):
+    """
+    Function to plot a candlestick chart for stock market financial data.
 
-    plt.figure(figsize = (10, 6))
-    plt.boxplot(rolling_data)
-    plt.title(f'Boxplot of Stock Prices Over a {window}-Day Moving Window')
-    plt.xlabel('Window Number')
-    plt.ylabel('Stock Price')
-    plt.show()
+    Parameters:
+    - data (DataFrame): The input stock market data containing 'open', 'high', 'low', 'close', and 'volume' columns.
+    - num_of_days (int): Number of trading days each candlestick represents. Default is 1.
+    """
 
-
-
-def plot_candlestick_chart(data, num_of_days=1):
-
+    # Ensure the data index is in datetime format for accurate time series plotting
     data.index = pd.to_datetime(data.index)
 
+    # If num_of_days is greater than 1, resample the data to aggregate over the specified number of days
     if num_of_days > 1:
-
         data = data.resample(f'{num_of_days}D').agg({
-            'open': 'first',
-            'high': 'max',
-            'low': 'min',
-            'close': 'last',
-            'volume': 'sum'
-        }).dropna()
+            'open': 'first',  # Take the first opening price in the resampled period
+            'high': 'max',  # Take the maximum high price in the resampled period
+            'low': 'min',  # Take the minimum low price in the resampled period
+            'close': 'last',  # Take the last closing price in the resampled period
+            'volume': 'sum'  # Sum the volumes in the resampled period
+        }).dropna()  # Drop any periods with NaNs after resampling
 
-
+    # Plot the candlestick chart using mplfinance
     mplf.plot(data, type='candle', style='yahoo', title='Candlestick Chart', ylabel='Price')
+
+
+# Example usage:
+# plot_candlestick_chart(data, num_of_days = 5)
+
+def plot_boxplot_chart(data : DataFrame, window : int = 30):
+    """
+    Function to plot a boxplot chart for stock market financial data using a moving window.
+
+    Parameters:
+    - data (DataFrame): The input stock market data containing 'close' column.
+    - window (int): The size of the moving window (in days) for which to compute the boxplot data. Default is 30.
+    """
+
+    # Create a list of rolling window data for the 'close' prices
+    rolling_data = [data['close'][i: i + window] for i in range(len(data) - window + 1)]
+
+    # Initialize the plot
+    plt.figure(figsize=(10, 6))
+
+    # Create the boxplot for the rolling windows
+    plt.boxplot(rolling_data)
+
+    # Set the plot title and labels
+    plt.title(f'Boxplot of Stock Prices Over a {window}-Day Moving Window')
+    plt.xlabel('Window Number')  # X-axis represents each rolling window
+    plt.ylabel('Stock Price')  # Y-axis represents the distribution of stock prices in each window
+
+    # Display the plot
+    plt.show()
+
+# Example usage:
+# plot_boxplot_chart(data, window=30)
