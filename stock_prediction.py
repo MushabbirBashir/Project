@@ -48,7 +48,7 @@ from collections import deque
 # DATA_SOURCE = "yahoo"
 COMPANY = 'CBA.AX'
 
-TRAIN_START = '2020-01-01'     # Start date to read
+TRAIN_START = '2023-01-01'     # Start date to read
 TRAIN_END = '2023-08-01'       # End date to read
 
 # data = web.DataReader(COMPANY, DATA_SOURCE, TRAIN_START, TRAIN_END) # Read data using yahoo
@@ -366,11 +366,16 @@ def load_data(ticker, start_date=None, end_date=None, n_steps=50, scale=True, sh
             column_scaler[column] = scaler
         result['column_scaler'] = column_scaler
 
-    # add the target column (label) by shifting by `lookup_step`
-    df['future'] = df['adjclose'].shift(-lookup_step)
+    targets = []
+    for i in range(len(df) - lookup_step):
+        target_seq = df['adjclose'].values[i + 1: i + 1 + lookup_step]
+        if len(target_seq) == lookup_step:
+            targets.append(target_seq)
 
-    # last `lookup_step` columns contains NaN in future column
-    # get them before dropping NaNs
+    targets_array = np.array(targets, dtype=np.float32)
+    df = df.iloc[:len(targets_array)]  # Trim the DataFrame to the length of `targets_array`
+    df['future'] = list(targets_array) # Assign target values
+
     last_sequence = np.array(df[feature_columns].tail(lookup_step))
 
     # Drop NaNs
@@ -424,7 +429,7 @@ def load_data(ticker, start_date=None, end_date=None, n_steps=50, scale=True, sh
 
     return result
 
-def create_dl_model(sequence_length : int, n_features : int, units : int = 256, cell : tf.keras.layers.Layer = LSTM, n_layers : int = 2, dropout : float = 0.3, loss : str = "huber", metrics : list[str] = ["mean_absolute_error"], optimizer : str = "rmsprop", bidirectional : bool = False):
+def create_dl_model(sequence_length : int, n_features : int, units : int = 256, cell : tf.keras.layers.Layer = LSTM, n_layers : int = 2, dropout : float = 0.3, loss : str = "mean_squared_error", metrics : list[str] = ["mean_absolute_error"], optimizer : str = "adam", bidirectional : bool = False, prediction_steps : int = 1):
     """
     Creates and compiles a deep learning model for time series prediction using LSTM or other RNN cells.
 
@@ -435,10 +440,11 @@ def create_dl_model(sequence_length : int, n_features : int, units : int = 256, 
         cell (tf.keras.layers.Layer): The type of RNN cell to use, e.g., LSTM, GRU. Default is LSTM.
         n_layers (int): Number of recurrent layers in the model. Default is 2.
         dropout (float): Dropout rate for regularization. Default is 0.3.
-        loss (str): Loss function for training the model. Default is "huber".
+        loss (str): Loss function for training the model. Default is "mean_squared_error".
         metrics (list[str]): List of metrics to evaluate during training. Default is ["mean_absolute_error"].
-        optimizer (str): Optimizer for training the model. Default is "rmsprop".
+        optimizer (str): Optimizer for training the model. Default is "adam".
         bidirectional (bool): Whether to use bidirectional RNN layers. Default is False.
+        prediction_steps (int): Number of days into the future to predict the closing price for.
 
     Returns:
         model (tf.keras.Model): Compiled Keras model ready for training.
@@ -471,7 +477,7 @@ def create_dl_model(sequence_length : int, n_features : int, units : int = 256, 
         model.add(Dropout(dropout))
 
     # Output layer
-    model.add(Dense(1, activation = "linear"))
+    model.add(Dense(prediction_steps, activation = "linear"))
 
     # Compile the model
     model.compile(loss = loss, metrics = metrics, optimizer = optimizer)
@@ -479,68 +485,38 @@ def create_dl_model(sequence_length : int, n_features : int, units : int = 256, 
     return model
 
 
-def test_dl_models():
+def test_dl_model():
 
-    training_data = load_data(COMPANY, start_date=TRAIN_START, end_date=TRAIN_END, split_by_date=False, feature_columns=["adjclose"], n_steps=100)
+    training_data = load_data(COMPANY, start_date=TRAIN_START, end_date=TRAIN_END, split_by_date=False, feature_columns=['adjclose', 'volume', 'open', 'high', 'low'], n_steps=100, lookup_step=7)
 
 
     # Experiment 1:
     lstm_model = create_dl_model(
         sequence_length=100,
-        n_features=1,
+        n_features=5,
         units=128,
         cell=LSTM,
         n_layers=2,
         dropout=0.3,
-        loss="mean_squared_error",
-        optimizer="adam",
+        prediction_steps=7
 
     )
-
-    # print("Experiment 1: LSTM Model Summary")
-    # lstm_model.summary()
-
-    # Experiment 2:
-    gru_model = create_dl_model(
-        sequence_length=100,
-        n_features=1,
-        units=128,
-        cell=GRU,
-        n_layers=2,
-        dropout=0.3,
-        optimizer="rmsprop"
-    )
-
-    # print("Experiment 2: GRU Model Summary")
-    # gru_model.summary()
-
-    # Experiment 3:
-    rnn_model = create_dl_model(
-        sequence_length=100,
-        n_features=1,
-        units=128,
-        cell=SimpleRNN,
-        n_layers=2,
-        dropout=0.3,
-        loss="mean_absolute_error",
-        optimizer="adam"
-    )
-
-    # print("Experiment 3: SimpleRNN Model Summary")
-    # rnn_model.summary()
 
     test_trained_dl(training_data = training_data, model = lstm_model, epochs = 5, batch_size= 64)
-    test_trained_dl(training_data=training_data, model=lstm_model, epochs=5, batch_size=32)
-    test_trained_dl(training_data=training_data, model=lstm_model, epochs=10, batch_size=64)
-    test_trained_dl(training_data=training_data, model=lstm_model, epochs=10, batch_size=32)
+
 
 def test_trained_dl(training_data : dict, model : tf.keras.Model, epochs : int, batch_size : int):
     data = model.fit(training_data["X_train"], training_data["y_train"], epochs=epochs, batch_size=batch_size, validation_data=(training_data["X_test"], training_data["y_test"]))
 
+    # last_sequence = training_data["X_test"][-1]
+    # last_sequence = np.expand_dims(last_sequence, axis=0)
     predictions = model.predict(training_data["X_test"])
-    mse = mean_squared_error(np.array(training_data["y_test"]).flatten(), np.array(predictions).flatten())
-    rmse = np.sqrt(mse)
-    print(f"Test RMSE: {rmse}")
+    predictions = predictions.flatten()
+    scaler = training_data['column_scaler']['adjclose']
+
+    predictions = scaler.inverse_transform(predictions.reshape(-1,1)).flatten()
+
+    print(f"Prediction : {predictions}")
 
 
 
@@ -611,4 +587,4 @@ def plot_boxplot_chart(data : DataFrame, window : int = 30, limit : int = 90):
 # plot_boxplot_chart(data, window=30)
 
 
-# test_dl_models()
+test_dl_model()
