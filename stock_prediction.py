@@ -2,6 +2,7 @@
 # Authors: Bao Vo and Cheong Koo
 # Date: 14/07/2021(v1); 19/07/2021 (v2); 02/07/2024 (v3)
 from tkinter import Scale
+from turtledemo.sorting_animate import start_qsort
 
 # Code modified from:
 # Title: Predicting Stock Prices with Python
@@ -33,7 +34,10 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional, GRU, SimpleRNN
 from tensorflow.keras.losses import Huber
 from tensorflow.python.keras.saving.saved_model_experimental import sequential
+from tensorflow.python.keras.utils.version_utils import training
 from tensorflow.python.ops.losses.losses_impl import mean_squared_error
+from statsmodels.tsa.arima.model import ARIMA
+import pmdarima as pm
 from yahoo_fin import stock_info as si
 from collections import deque
 
@@ -48,8 +52,8 @@ from collections import deque
 # DATA_SOURCE = "yahoo"
 COMPANY = 'CBA.AX'
 
-TRAIN_START = '2023-01-01'     # Start date to read
-TRAIN_END = '2023-08-01'       # End date to read
+TRAIN_START = '2021-01-01'     # Start date to read
+TRAIN_END = '2023-12-01'       # End date to read
 
 # data = web.DataReader(COMPANY, DATA_SOURCE, TRAIN_START, TRAIN_END) # Read data using yahoo
 
@@ -57,7 +61,7 @@ TRAIN_END = '2023-08-01'       # End date to read
 import yfinance as yf
 
 # Get the data for the stock AAPL
-data = si.get_data(COMPANY, start_date=TRAIN_START, end_date=TRAIN_END)
+#data = si.get_data(COMPANY, start_date=TRAIN_START, end_date=TRAIN_END)
 
 #------------------------------------------------------------------------------
 # Prepare Data
@@ -289,7 +293,7 @@ data = si.get_data(COMPANY, start_date=TRAIN_START, end_date=TRAIN_END)
 # # of the stock price changes to detect some patterns with the trend of
 # # the stock price:
 # # https://github.com/jason887/Using-Deep-Learning-Neural-Networks-and-Candlestick-Chart-Representation-to-Predict-Stock-Market
-# # Can you combine these different techniques for a better prediction??
+# # Can you combine these different techniques for a better prediction??)
 
 
 
@@ -347,8 +351,12 @@ def load_data(ticker, start_date=None, end_date=None, n_steps=50, scale=True, sh
     for col in feature_columns:
         assert col in df.columns, f"'{col}' does not exist in the DataFrame."
 
+
+
     # Prepare the result dictionary
     result = {}
+
+    result['feature_columns'] = feature_columns
     #Add a copy of the original dataframe
     result['df'] = df.copy()
 
@@ -487,7 +495,7 @@ def create_dl_model(sequence_length : int, n_features : int, units : int = 256, 
 
 def test_dl_model():
 
-    training_data = load_data(COMPANY, start_date=TRAIN_START, end_date=TRAIN_END, split_by_date=False, feature_columns=['adjclose', 'volume', 'open', 'high', 'low'], n_steps=100, lookup_step=7)
+    training_data = load_data(COMPANY, start_date=TRAIN_START, end_date=TRAIN_END, split_by_date=False, feature_columns=['adjclose', 'volume', 'open', 'high', 'low'], n_steps=100, lookup_step=30)
 
 
     # Experiment 1:
@@ -496,34 +504,48 @@ def test_dl_model():
         n_features=5,
         units=128,
         cell=LSTM,
-        n_layers=2,
+        n_layers=5,
         dropout=0.3,
-        prediction_steps=7
+        prediction_steps=30
 
     )
 
-    test_trained_dl(training_data = training_data, model = lstm_model, epochs = 5, batch_size= 64)
+    test_trained_dl(training_data = training_data, model = lstm_model, epochs = 5, batch_size= 32)
 
 
 def test_trained_dl(training_data : dict, model : tf.keras.Model, epochs : int, batch_size : int):
-    data = model.fit(training_data["X_train"], training_data["y_train"], epochs=epochs, batch_size=batch_size, validation_data=(training_data["X_test"], training_data["y_test"]))
+    model.fit(training_data["X_train"], training_data["y_train"], epochs=epochs, batch_size=batch_size, validation_data=(training_data["X_test"], training_data["y_test"]))
 
-    # last_sequence = training_data["X_test"][-1]
-    # last_sequence = np.expand_dims(last_sequence, axis=0)
-    predictions = model.predict(training_data["X_test"])
+    last_sequence = training_data["X_test"][-1]
+    last_sequence = np.expand_dims(last_sequence, axis=0)
+    predictions = model.predict(last_sequence)
     predictions = predictions.flatten()
     scaler = training_data['column_scaler']['adjclose']
 
+    feature_columns = training_data.get('feature_columns', [])
+    feature_name = 'adjclose'
+    assert feature_name in feature_columns, f"Feature {feature_name} not found"
+
+    feature_index = feature_columns.index(feature_name)
+
     predictions = scaler.inverse_transform(predictions.reshape(-1,1)).flatten()
 
+    actual = training_data['X_test'][:, -1, feature_index][:7]
+    actual = scaler.inverse_transform(actual.reshape(-1,1)).flatten()
     print(f"Prediction : {predictions}")
+    # print(actual)
+
+
+    # plot_candlestick_chart(training_data, actual=actual, predicted=predictions)
+
+    return predictions
 
 
 
 
 
 
-def plot_candlestick_chart(data : DataFrame, num_of_days : int = 1):
+def plot_candlestick_chart(data : DataFrame, actual: np.ndarray = None, predicted: np.ndarray = None, num_of_days : int = 1, prediction_only : bool = True):
     """
     Function to plot a candlestick chart for stock market financial data.
 
@@ -531,6 +553,11 @@ def plot_candlestick_chart(data : DataFrame, num_of_days : int = 1):
     - data (DataFrame): The input stock market data containing 'Open', 'High', 'Low', 'Close', and 'Volume' columns.
     - num_of_days (int): Number of trading days each candlestick represents. Default is 1.
     """
+    # Extract DataFrame from the dictionary
+    if isinstance(data, dict) and 'test_df' in data:
+        data = data['test_df']
+    else:
+        raise ValueError("Expected 'data' to be a dictionary containing a DataFrame under the key 'test_df'.")
 
     # Ensure the data index is in datetime format for accurate time series plotting
     data.index = pd.to_datetime(data.index)
@@ -545,8 +572,21 @@ def plot_candlestick_chart(data : DataFrame, num_of_days : int = 1):
             'volume': 'sum'  # Sum the volumes in the resampled period
         }).dropna()  # Drop any periods with NaNs after resampling
 
-    # Plot the candlestick chart using mplfinance
-    mplf.plot(data, type='candle', style='yahoo', title='Candlestick Chart', ylabel='Price')
+    if not prediction_only:
+        # Plot the candlestick chart using mplfinance
+        mplf.plot(data, type='candle', style='yahoo', title='Candlestick Chart', ylabel='Price')
+
+    if actual is not None or predicted is not None:
+        # Plotting actual vs predicted over the last 7 days
+        plt.figure(figsize=(10, 6))
+        days = np.arange(1, len(actual)+1)
+        plt.plot(days, actual, label='Actual', color='blue', marker='o')
+        plt.plot(days, predicted, label='Predicted', color='red', linestyle='--', marker='o')
+        plt.title('ARIMA Model - 7 Days Prediction vs Actual')
+        plt.xlabel('Days')
+        plt.ylabel('Price')
+        plt.legend()
+        plt.show()
 
 
 # Example usage:
@@ -587,4 +627,139 @@ def plot_boxplot_chart(data : DataFrame, window : int = 30, limit : int = 90):
 # plot_boxplot_chart(data, window=30)
 
 
-test_dl_model()
+#test_dl_model()
+
+def create_sarima_model(data: dict, feature_name='adjclose', start_p=1, start_q=1, max_p=3, max_q=3, m=1, seasonal=False):
+    """
+    Creates and trains a SARIMA model for time series prediction.
+
+    Parameters:
+        data (dict): Training data containing input features and target labels.
+        feature_name (str): The feature name to train the SARIMA model on, e.g., 'adjclose'. Default is 'adjclose'.
+        start_p (int): Starting value of the autoregressive (AR) order. Default is 1.
+        start_q (int): Starting value of the moving average (MA) order. Default is 1.
+        max_p (int): Maximum value for the autoregressive (AR) order. Default is 3.
+        max_q (int): Maximum value for the moving average (MA) order. Default is 3.
+        m (int): Seasonal period, e.g., 12 for monthly data. Default is 1.
+        seasonal (bool): Whether to include seasonal components. Default is False.
+
+    Returns:
+        model: The fitted SARIMA model.
+    """
+    feature_columns = data.get('feature_columns', [])
+    assert feature_name in feature_columns, f"Feature {feature_name} not found"
+
+    feature_index = feature_columns.index(feature_name)
+
+    # Extract the specific feature from the training data for model training
+    Xtrain = data['X_train']
+    training_series = Xtrain[:, -1, feature_index]
+
+    # Create and train the SARIMA model using auto_arima to find optimal parameters
+    model = pm.auto_arima(
+        training_series,
+        start_p=start_p,
+        start_q=start_q,
+        max_p=max_p,
+        max_q=max_q,
+        m=m,
+        d=None,
+        seasonal=seasonal,
+        trace=True,
+        error_action='ignore',
+        suppress_warning=True,
+        stepwise=True
+    )
+    return model
+
+
+def test_sarima_model():
+    # Load training data
+    training_data = load_data(
+        COMPANY,
+        start_date=TRAIN_START,
+        end_date=TRAIN_END,
+        split_by_date=False,
+        feature_columns=['adjclose']
+    )
+
+    # Create a SARIMA model with specified parameters
+    arima_model = create_sarima_model(training_data, feature_name='adjclose', seasonal=True, m=4)
+    print(arima_model.summary())
+
+    feature_columns = training_data.get('feature_columns', [])
+    assert 'adjclose' in feature_columns, "Feature not found"
+    feature_index = feature_columns.index('adjclose')
+
+    # Use trained model to predict on test set
+    test_series = training_data['X_test'][:, -1, feature_index]
+    predicted_7days = arima_model.predict(n_periods=30)
+    actual_7days = test_series[:30]
+
+    # Uncomment the line below to plot actual vs predicted values using candlestick chart
+    # plot_candlestick_chart(training_data, actual=actual_7days, predicted=predicted_7days)
+
+
+def ensemble_prediction(use_LSTM=True, use_SARIMA=True):
+    """
+    Creates an ensemble model combining predictions from LSTM and SARIMA models.
+
+    Parameters:
+        use_LSTM (bool): Whether to include the LSTM model in the ensemble. Default is True.
+        use_SARIMA (bool): Whether to include the SARIMA model in the ensemble. Default is True.
+
+    Returns:
+        None: Prints the RMSE of the ensemble model on the test set.
+    """
+    # Load training data with specified features
+    training_data = load_data(
+        COMPANY,
+        start_date=TRAIN_START,
+        end_date=TRAIN_END,
+        split_by_date=False,
+        feature_columns=['adjclose', 'volume', 'open', 'high', 'low'],
+        n_steps=100,
+        lookup_step=7
+    )
+
+    lstm_model = None
+    lstm_prediction = None
+
+    # Train LSTM model if use_LSTM is True
+    if use_LSTM:
+        lstm_model = create_dl_model(
+            sequence_length=100,
+            n_features=5,
+            units=128,
+            cell=LSTM,
+            n_layers=5,
+            dropout=0.3,
+            prediction_steps=7
+        )
+        lstm_prediction = test_trained_dl(training_data=training_data, model=lstm_model, epochs=20, batch_size=64)
+
+    sarima_model = None
+    sarima_prediction = None
+
+    # Train SARIMA model if use_SARIMA is True
+    if use_SARIMA:
+        sarima_model = create_sarima_model(data=training_data, feature_name='adjclose', m=12, seasonal=True)
+        sarima_prediction = sarima_model.predict(n_periods=7)
+
+    # Combine predictions from both models if available
+    combined_predictions = (sarima_prediction + lstm_prediction) / 2
+
+    # Reshape y_test to match the shape of combined predictions
+    y_test = training_data['y_test']
+    y_test = y_test.reshape(-1, 1).flatten()
+    y_test = y_test[-7:]
+
+    # Calculate and print RMSE for the ensemble model
+    rmse = np.sqrt(mean_squared_error(y_test, combined_predictions))
+    print(f'Ensemble Model RMSE: {rmse}')
+
+
+# Run the ensemble prediction function
+ensemble_prediction()
+
+

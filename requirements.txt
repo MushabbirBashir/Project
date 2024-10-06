@@ -7,3 +7,5 @@ scikit-learn
 pandas-datareader
 yfinance
 yahoo_fin
+statsmodels
+pmdarima
