@@ -1,6 +1,7 @@
 # File: stock_prediction.py
 # Authors: Bao Vo and Cheong Koo
 # Date: 14/07/2021(v1); 19/07/2021 (v2); 02/07/2024 (v3)
+from datetime import datetime
 from tkinter import Scale
 from turtledemo.sorting_animate import start_qsort
 
@@ -25,6 +26,8 @@ import pandas_datareader as web
 import datetime as dt
 import tensorflow as tf
 import mplfinance as mplf
+import requests
+from bs4 import BeautifulSoup
 from keras.src.activations import linear
 from pandas.core.interchange.dataframe_protocol import DataFrame
 
@@ -50,10 +53,13 @@ from collections import deque
 # If not, save the data into a directory
 #------------------------------------------------------------------------------
 # DATA_SOURCE = "yahoo"
-COMPANY = 'CBA.AX'
+COMPANY = 'TSLA'
 
 TRAIN_START = '2021-01-01'     # Start date to read
 TRAIN_END = '2023-12-01'       # End date to read
+
+
+
 
 # data = web.DataReader(COMPANY, DATA_SOURCE, TRAIN_START, TRAIN_END) # Read data using yahoo
 
@@ -711,6 +717,7 @@ def ensemble_prediction(use_LSTM=True, use_SARIMA=True):
     Returns:
         None: Prints the RMSE of the ensemble model on the test set.
     """
+    combined_prediction = 0
     # Load training data with specified features
     training_data = load_data(
         COMPANY,
@@ -737,6 +744,8 @@ def ensemble_prediction(use_LSTM=True, use_SARIMA=True):
             prediction_steps=7
         )
         lstm_prediction = test_trained_dl(training_data=training_data, model=lstm_model, epochs=20, batch_size=64)
+        combined_prediction += lstm_prediction
+
 
     sarima_model = None
     sarima_prediction = None
@@ -745,9 +754,13 @@ def ensemble_prediction(use_LSTM=True, use_SARIMA=True):
     if use_SARIMA:
         sarima_model = create_sarima_model(data=training_data, feature_name='adjclose', m=12, seasonal=True)
         sarima_prediction = sarima_model.predict(n_periods=7)
+        combined_prediction += sarima_prediction
 
-    # Combine predictions from both models if available
-    combined_predictions = (sarima_prediction + lstm_prediction) / 2
+    if use_SARIMA and use_LSTM:
+        # Combine predictions from both models if available
+        combined_predictions = combined_prediction / 2
+    else:
+        combined_predictions = combined_prediction
 
     # Reshape y_test to match the shape of combined predictions
     y_test = training_data['y_test']
@@ -760,6 +773,7 @@ def ensemble_prediction(use_LSTM=True, use_SARIMA=True):
 
 
 # Run the ensemble prediction function
-ensemble_prediction()
+# ensemble_prediction(use_SARIMA=False)
+
 
 

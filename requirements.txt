@@ -9,3 +9,6 @@ yfinance
 yahoo_fin
 statsmodels
 pmdarima
+requests
+beautifulsoup4
+vaderSentiment
